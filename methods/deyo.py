@@ -22,8 +22,8 @@ class DeYO(nn.Module):
     def __init__(self, model, args, optimizer, steps=1, episodic=False, deyo_margin=0.5*math.log(1000), margin_e0=0.4*math.log(1000)):
         super().__init__()
         self.model = model
-        self.alpha = nn.Parameter(torch.tensor(1.0))  # weight for entropy
-        self.beta = nn.Parameter(torch.tensor(1.0))   # weight for PLPD
+        self.alpha = nn.Parameter(torch.tensor(float(args.reweight_ent))) if args.reweight_ent else nn.Parameter(torch.tensor(1.0))  # weight for entropy
+        self.beta = nn.Parameter(torch.tensor(float(args.reweight_plpd))) if args.reweight_plpd else nn.Parameter(torch.tensor(1.0))   # weight for PLPD
         self.register_parameter("alpha", self.alpha)
         self.register_parameter("beta", self.beta)
         params = list(optimizer.param_groups[0]['params']) + [self.alpha, self.beta]
@@ -37,7 +37,6 @@ class DeYO(nn.Module):
         args.counts = [1e-6,1e-6,1e-6,1e-6]
         args.correct_counts = [0,0,0,0]
         
-
         self.deyo_margin = deyo_margin
         self.margin_e0 = margin_e0
 
@@ -195,7 +194,11 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
         # coeff = (plpd_norm / (1 + entropys_norm))
 
         # --- LEARNABLE PARAMETER IMPLEMENTATION ---
-        coeff = F.softmax(alpha * plpd) * F.softmax(-beta * (entropys - margin))
+        # coeff = F.softmax(alpha * plpd, dim=0) + F.softmax(-beta * (entropys - margin), dim=0)
+
+        coeff = (alpha * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
+                 beta * (1 / (torch.exp(-1. * plpd.clone().detach())))
+                ) 
 
         # --- ORIGINAL IMPLEMENTATION ---
         # coeff = (args.reweight_ent * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
