@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.jit
 import torchvision
+import torch.nn.functional as F
 import math
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,6 +22,12 @@ class DeYO(nn.Module):
     def __init__(self, model, args, optimizer, steps=1, episodic=False, deyo_margin=0.5*math.log(1000), margin_e0=0.4*math.log(1000)):
         super().__init__()
         self.model = model
+        self.alpha = nn.Parameter(torch.tensor(1.0))  # weight for entropy
+        self.beta = nn.Parameter(torch.tensor(1.0))   # weight for PLPD
+        self.register_parameter("alpha", self.alpha)
+        self.register_parameter("beta", self.beta)
+        params = list(optimizer.param_groups[0]['params']) + [self.alpha, self.beta]
+        optimizer.param_groups[0]['params'] = params
         self.optimizer = optimizer
         self.args = args
         if args.wandb_log:
@@ -29,6 +36,7 @@ class DeYO(nn.Module):
         self.episodic = episodic
         args.counts = [1e-6,1e-6,1e-6,1e-6]
         args.correct_counts = [0,0,0,0]
+        
 
         self.deyo_margin = deyo_margin
         self.margin_e0 = margin_e0
@@ -42,11 +50,13 @@ class DeYO(nn.Module):
                 if flag:
                     outputs, backward, final_backward = forward_and_adapt_deyo(x, iter_, self.model, self.args,
                                                                               self.optimizer, self.deyo_margin,
-                                                                              self.margin_e0, targets, flag, group)
+                                                                              self.margin_e0, self.alpha, self.beta,
+                                                                              targets, flag, group)
                 else:
                     outputs = forward_and_adapt_deyo(x, iter_, self.model, self.args,
                                                     self.optimizer, self.deyo_margin,
-                                                    self.margin_e0, targets, flag, group)
+                                                    self.margin_e0, self.alpha, self.beta, 
+                                                    targets, flag, group)
         else:
             for _ in range(self.steps):
                 if flag:
@@ -55,12 +65,16 @@ class DeYO(nn.Module):
                                                                                                     self.optimizer, 
                                                                                                     self.deyo_margin,
                                                                                                     self.margin_e0,
+                                                                                                    self.alpha,
+                                                                                                    self.beta,
                                                                                                     targets, flag, group)
                 else:
                     outputs = forward_and_adapt_deyo(x, iter_, self.model, 
                                                     self.args, self.optimizer, 
                                                     self.deyo_margin,
                                                     self.margin_e0,
+                                                    self.alpha,
+                                                    self.beta,
                                                     targets, flag, group, self)
         if targets is None:
             if flag:
@@ -77,9 +91,8 @@ class DeYO(nn.Module):
         if self.model_state is None or self.optimizer_state is None:
             raise Exception("cannot reset without saved model/optimizer state")
         load_model_and_optimizer(self.model, self.optimizer,
-                                 self.model_state, self.optimizer_state)
+                                 self.model_state, self.optimizer_state, self.alpha, self.beta)
         self.ema = None
-
 
 @torch.jit.script
 def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
@@ -89,7 +102,7 @@ def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
     return -(x.softmax(1) * x.log_softmax(1)).sum(1)
 
 @torch.enable_grad()  # ensure grads in possible no grad context for testing
-def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin, targets=None, flag=True, group=None):
+def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin, alpha, beta, targets=None, flag=True, group=None):
     """Forward and adapt model input data.
     Measure entropy of the model prediction, take gradients, and update params.
     """
@@ -165,9 +178,29 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
         corr_pl_2 = (targets[filter_ids_1][filter_ids_2] == prob_outputs[filter_ids_2].argmax(dim=1)).sum().item()
 
     if args.reweight_ent or args.reweight_plpd:
-        coeff = (args.reweight_ent * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
-                 args.reweight_plpd * (1 / (torch.exp(-1. * plpd.clone().detach())))
-                )            
+
+        # --- SOFTMIN SOFTMAX IMPLEMENTATION ---
+        # T = 0.5
+        # entropy_weights = F.softmin(entropys / T, dim=0)
+        # plpd_weights = F.softmax(plpd / T, dim=0)
+        # coeff = plpd_weights * entropy_weights
+
+        # --- MULTIPLICATIVE INVERSE IMPLEMENTATION ---
+        # plpd_norm = plpd - plpd.min(0)[0]
+        # plpd_norm /= plpd_norm.max(0)[0]
+
+        # entropys_norm = entropys - entropys.min(0)[0]
+        # entropys_norm /= entropys_norm.max(0)[0]
+
+        # coeff = (plpd_norm / (1 + entropys_norm))
+
+        # --- LEARNABLE PARAMETER IMPLEMENTATION ---
+        coeff = F.softmax(alpha * plpd) * F.softmax(-beta * (entropys - margin))
+
+        # --- ORIGINAL IMPLEMENTATION ---
+        # coeff = (args.reweight_ent * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
+        #          args.reweight_plpd * (1 / (torch.exp(-1. * plpd.clone().detach())))
+        #         )            
         entropys = entropys.mul(coeff)
     loss = entropys.mean(0)
 
@@ -215,10 +248,10 @@ def collect_params(model):
     return params, names
 
 
-def load_model_and_optimizer(model, optimizer, model_state, optimizer_state):
+def load_model_and_optimizer(model, optimizer, model_state, optimizer_state, alpha, beta):
     """Restore the model and optimizer states from copies."""
     model.load_state_dict(model_state, strict=True)
-    optimizer.load_state_dict(optimizer_state)
+    optimizer.load_state_dict(optimizer_state + [alpha, beta])
 
 
 def configure_model(model):

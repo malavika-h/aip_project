@@ -51,10 +51,10 @@ class ColoredMNIST(datasets.VisionDataset):
         self.flip = flip
         self.prepare_colored_mnist()
         if env in ['train1', 'train2', 'test']:
-            self.data_label_tuples = torch.load(os.path.join(self.root, env) + '.pt')
+            self.data_label_tuples = torch.load(os.path.join(self.root, env) + '.pt', weights_only=False)
         elif env == 'all_train':
-            self.data_label_tuples = torch.load(os.path.join(self.root, 'train1.pt')) + \
-                                       torch.load(os.path.join(self.root, 'train2.pt'))
+            self.data_label_tuples = torch.load(os.path.join(self.root, 'train1.pt'), weights_only=False) + \
+                                       torch.load(os.path.join(self.root, 'train2.pt'), weights_only=False)
         else:
             raise RuntimeError(f'{env} env unknown. Valid envs are train1, train2, test, and all_train')
 
