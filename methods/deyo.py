@@ -125,17 +125,16 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
     # csid_weights = None
 
     # Optional: weight PLPD and entropy using csID confidence scores BEFORE filtering
-    # if hasattr(args, "use_csid_weighting") and args.use_csid_weighting and hasattr(model, "csid_probs"):
     prob_slice = deyo.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(entropys)]
     csid_weights = torch.tensor(prob_slice, device=entropys.device, dtype=entropys.dtype)
 
-        # Apply weighting before thresholding
-        # plpd = plpd * csid_weights
-        # entropys = entropys * csid_weights
+    # Apply weighting before thresholding
+    # plpd = plpd * csid_weights
+    # entropys = entropys * csid_weights
 
     if args.filter_ent:
         # --- ORIGINAL THRESHOLDING ---
-        # filter_ids_1 = torch.where((entropys < deyo_margin))
+        filter_ids_1 = torch.where((entropys < deyo_margin))
         # --- OTSU THRESHOLDING ---
         # entropy_scores = entropys.detach().cpu().numpy()
         # ent_thresh = threshold_otsu(entropy_scores)
@@ -147,7 +146,10 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
         # ent_thresh = entropy_scores[kneedle.knee]
         # filter_ids_1 = torch.where((entropys < ent_thresh))
         # --- UNIENT THRESHOLDING ---
-        filter_ids_1 = torch.where((csid_weights > 0.5))        
+        np_csid = csid_weights.cpu().numpy()
+        # threshold = np.percentile(np_csid, 70)
+        threshold = 0.5
+        filter_ids_1 = torch.where((csid_weights > threshold))     
         
     else:    
         filter_ids_1 = torch.where((entropys <= math.log(1000)))
