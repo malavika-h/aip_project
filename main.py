@@ -7,6 +7,7 @@ import os
 import time
 import math
 from config import get_args
+from methods.deyo import extract_features_from_loader, compute_prototypes, compute_similarity_scores, fit_gmm
 
 args = get_args()
 if args.dset=='ImageNet-C':
@@ -412,6 +413,16 @@ if __name__ == '__main__':
                                                   ]))
                     fisher_loader = torch.utils.data.DataLoader(fisher_dataset, batch_size=args.test_batch_size,
                                                                 shuffle=args.if_shuffle, **kwargs)
+
+                    train_dataset = ColoredMNIST(root=args.data_corruption, env='all_train', flip=True,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
+                            ]))
+                    train_loader = torch.utils.data.DataLoader(train_dataset,
+                                                              batch_size=args.test_batch_size,
+                                                              shuffle=True, num_workers=args.workers,
+                                                              pin_memory=True)
                 else:
                     fisher_dataset, fisher_loader = prepare_test_data(args)
                 fisher_dataset.set_dataset_size(args.fisher_size)
@@ -587,6 +598,38 @@ if __name__ == '__main__':
 
             optimizer = torch.optim.SGD(params, args.lr, momentum=0.9)
             adapt_model = deyo.DeYO(net, args, optimizer, deyo_margin=args.deyo_margin, margin_e0=args.deyo_margin_e0)
+
+            logger.info("Extracting features for UniEnt csID estimation")
+            # Source data for prototypes
+            if args.dset=='ColoredMNIST':
+                train_dataset = ColoredMNIST(root=args.data_corruption, env='train', flip=True,
+                                            transform=transforms.Compose([
+                                                transforms.ToTensor(),
+                                                transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
+                                            ]))
+                train_loader = torch.utils.data.DataLoader(train_dataset,
+                                                          batch_size=args.test_batch_size,
+                                                          shuffle=True, num_workers=args.workers,
+                                                          pin_memory=True)
+            elif args.dset=='Waterbirds':
+                  train_dataset = WaterbirdsDataset(file=args.data_corruption_file, split='train', transform=transform)
+                  train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.test_batch_size,
+                                                                shuffle=args.if_shuffle, num_workers=args.workers,
+                                                                pin_memory=True)
+
+
+            # Extract features from model
+            train_feats, train_labels = extract_features_from_loader(net, train_loader, device='cuda')
+            prototypes = compute_prototypes(train_feats, train_labels, args.num_class)
+
+            test_feats, _ = extract_features_from_loader(net, val_loader, device='cuda')
+            sim_scores = compute_similarity_scores(test_feats, prototypes)
+            csid_probs = fit_gmm(sim_scores)
+
+            logger.info(f"Assigned csID scores to {len(csid_probs)} test samples.")
+
+            adapt_model.csid_probs = torch.tensor(csid_probs).cuda()
+            args.use_csid_weighting = True
 
             batch_time = AverageMeter('Time', ':6.3f')
             top1 = AverageMeter('Acc@1', ':6.2f')

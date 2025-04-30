@@ -20,3 +20,4 @@ output/
 wandb/
 .idea/
 .ipynb_checkpoints/
+data/

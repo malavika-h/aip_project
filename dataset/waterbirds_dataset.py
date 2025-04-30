@@ -17,15 +17,27 @@ class WaterbirdsDataset(Dataset):
         return self.num_data
         # return len(self.dataset)
 
+    # def __getitem__(self,index):
+    #     if(index >= self.num_data):
+    #         raise IndexError()
+    #     true_idx = self.index_map[index]
+    #     img = self.dataset[str(true_idx)][()]
+    #     if self.transform is not None:
+    #         img = self.transform(img)
+    #     y = self.dataset[str(true_idx)].attrs['y']
+    #     return img, y, self.dataset[str(true_idx)].attrs
+
     def __getitem__(self,index):
-        if(index >= self.num_data):
+        if index >= self.num_data:
             raise IndexError()
         true_idx = self.index_map[index]
         img = self.dataset[str(true_idx)][()]
         if self.transform is not None:
             img = self.transform(img)
         y = self.dataset[str(true_idx)].attrs['y']
-        return img, y, self.dataset[str(true_idx)].attrs
+        attrs = dict(self.dataset[str(true_idx)].attrs)  # <== convert to dict
+        return img, y, attrs
+
     
     def set_dataset_size(self, subset_size):
         indices = list(range(self.num_data))
