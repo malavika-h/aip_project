@@ -6,6 +6,7 @@ from logging import debug
 import os
 import time
 import math
+from skimage.filters import threshold_otsu
 from config import get_args
 from methods.deyo import extract_features_from_loader, compute_prototypes, compute_similarity_scores, fit_gmm
 
@@ -602,7 +603,7 @@ if __name__ == '__main__':
             logger.info("Extracting features for UniEnt csID estimation")
             # Source data for prototypes
             if args.dset=='ColoredMNIST':
-                train_dataset = ColoredMNIST(root=args.data_corruption, env='train', flip=True,
+                train_dataset = ColoredMNIST(root=args.data_corruption, env='train1', flip=True,
                                             transform=transforms.Compose([
                                                 transforms.ToTensor(),
                                                 transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
@@ -629,7 +630,37 @@ if __name__ == '__main__':
             logger.info(f"Assigned csID scores to {len(csid_probs)} test samples.")
 
             adapt_model.csid_probs = torch.tensor(csid_probs).cuda()
-            args.use_csid_weighting = True
+            args.use_csid_weighting = False
+
+            logger.info("Computing global Otsu threshold from CSID-weighted entropy scores")
+
+            all_entropys = []
+
+            csid_probs_tensor = torch.tensor(csid_probs).cuda()
+
+            sample_idx = 0
+            with torch.no_grad():
+                for dl in val_loader:
+                    images = dl[0].cuda() if args.gpu is not None else dl[0]
+                    batch_size = images.size(0)
+
+                    outputs = net(images)
+                    probs = torch.nn.functional.softmax(outputs, dim=1)
+                    entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
+
+                    # Select corresponding csID probs for this batch
+                    # csid_batch = csid_probs_tensor[sample_idx: sample_idx + batch_size]
+                    # weighted_entropy = entropy * csid_batch
+
+                    all_entropys.append(entropy.cpu().numpy())
+                    sample_idx += batch_size
+
+            all_entropys_np = np.concatenate(all_entropys)
+            global_ent_thresh = threshold_otsu(all_entropys_np)
+
+            logger.info(f"Global Otsu threshold (CSID-weighted): {global_ent_thresh:.4f}")
+
+            args.global_ent_thresh = global_ent_thresh
 
             batch_time = AverageMeter('Time', ':6.3f')
             top1 = AverageMeter('Acc@1', ':6.2f')
