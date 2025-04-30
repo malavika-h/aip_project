@@ -648,10 +648,6 @@ if __name__ == '__main__':
                     probs = torch.nn.functional.softmax(outputs, dim=1)
                     entropy = -torch.sum(probs * torch.log(probs + 1e-6), dim=1)
 
-                    # Select corresponding csID probs for this batch
-                    # csid_batch = csid_probs_tensor[sample_idx: sample_idx + batch_size]
-                    # weighted_entropy = entropy * csid_batch
-
                     all_entropys.append(entropy.cpu().numpy())
                     sample_idx += batch_size
 

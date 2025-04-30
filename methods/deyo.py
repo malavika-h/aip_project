@@ -129,31 +129,32 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
     csid_weights = torch.tensor(prob_slice, device=entropys.device, dtype=entropys.dtype)
 
     # Apply weighting before thresholding
-    # plpd = plpd * csid_weights
-    # entropys = entropys * csid_weights
+    entropys = entropys * csid_weights
 
     if args.filter_ent:
         # --- ORIGINAL THRESHOLDING ---
-        filter_ids_1 = torch.where((entropys < deyo_margin))
+        # filter_ids_1 = torch.where((entropys < deyo_margin))
         # --- OTSU THRESHOLDING ---
-        # entropy_scores = entropys.detach().cpu().numpy()
-        # ent_thresh = threshold_otsu(entropy_scores)
-        # filter_ids_1 = torch.where((entropys < ent_thresh))
-        # filter_ids_1 = torch.where((entropys < args.global_ent_thresh))
+        entropy_scores = entropys.detach().cpu().numpy()
+        ent_thresh = threshold_otsu(entropy_scores)
+        filter_ids_1 = torch.where((entropys < ent_thresh))
+        filter_ids_1 = torch.where((entropys < args.global_ent_thresh))
         # --- ELBOW THRESHOLDING ---
         # entropy_scores = np.sort(entropys.detach().cpu().numpy())
         # kneedle = KneeLocator(range(len(entropy_scores)), entropy_scores, curve='convex', direction='increasing')
         # ent_thresh = entropy_scores[kneedle.knee]
         # filter_ids_1 = torch.where((entropys < ent_thresh))
         # --- UNIENT THRESHOLDING ---
-        np_csid = csid_weights.cpu().numpy()
+        # np_csid = csid_weights.cpu().numpy()
         # threshold = np.percentile(np_csid, 70)
-        threshold = 0.5
-        filter_ids_1 = torch.where((csid_weights > threshold))     
+        # # threshold = 0.5
+        # filter_ids_1 = torch.where((csid_weights > threshold))  
+        # filter_ids_1 = selected_slice.clone().detach()
         
     else:    
         filter_ids_1 = torch.where((entropys <= math.log(1000)))
     entropys = entropys[filter_ids_1]
+    csid_weights = csid_weights[filter_ids_1]
     backward = len(entropys)
     if backward==0:
         if targets is not None:
@@ -190,14 +191,16 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
 
     plpd = torch.gather(prob_outputs, dim=1, index=cls1.reshape(-1,1)) - torch.gather(prob_outputs_prime, dim=1, index=cls1.reshape(-1,1))
     plpd = plpd.reshape(-1)
+
+    plpd = plpd * csid_weights
     
     if args.filter_plpd:
         # --- ORIGINAL THRESHOLDING ---
-        filter_ids_2 = torch.where(plpd > args.plpd_threshold)
+        # filter_ids_2 = torch.where(plpd > args.plpd_threshold)
         # --- OTSU THRESHOLDING ---
-        # plpd_scores = plpd.detach().cpu().numpy()
-        # plpd_thresh = threshold_otsu(plpd_scores)
-        # filter_ids_2 = torch.where((plpd > plpd_thresh))
+        plpd_scores = plpd.detach().cpu().numpy()
+        plpd_thresh = threshold_otsu(plpd_scores)
+        filter_ids_2 = torch.where((plpd > plpd_thresh))
         # --- ELBOW THRESHOLDING ---
         # plpd_scores = np.sort(plpd.detach().cpu().numpy())
         # kneedle = KneeLocator(range(len(plpd_scores)), plpd_scores, curve='convex', direction='increasing')
@@ -376,8 +379,4 @@ def fit_gmm(sim_scores):
     high_conf = np.argmax(gmm.means_)
     probs = gmm.predict_proba(sim_scores.reshape(-1, 1))
         # Ensure component 0 is csID (high similarity)
-    if gmm.means_[0, 0] < gmm.means_[1, 0]:
-        csid_probs = probs[:, 1]  # higher mean → csID
-    else:
-        csid_probs = probs[:, 0]
     return probs[:, high_conf]  # probability of being csID
