@@ -603,7 +603,7 @@ if __name__ == '__main__':
             logger.info("Extracting features for UniEnt csID estimation")
             # Source data for prototypes
             if args.dset=='ColoredMNIST':
-                train_dataset = ColoredMNIST(root=args.data_corruption, env='train1', flip=True,
+                train_dataset = ColoredMNIST(root=args.data_corruption, env='all_train', flip=True,
                                             transform=transforms.Compose([
                                                 transforms.ToTensor(),
                                                 transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
@@ -630,7 +630,7 @@ if __name__ == '__main__':
             logger.info(f"Assigned csID scores to {len(csid_probs)} test samples.")
 
             adapt_model.csid_probs = torch.tensor(csid_probs).cuda()
-            args.use_csid_weighting = False
+            args.use_csid_weighting = True
 
             logger.info("Computing global Otsu threshold from CSID-weighted entropy scores")
 

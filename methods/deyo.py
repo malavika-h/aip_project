@@ -61,12 +61,12 @@ class DeYO(nn.Module):
                     outputs, backward, final_backward = forward_and_adapt_deyo(x, iter_, self.model, self.args,
                                                                               self.optimizer, self.deyo_margin,
                                                                               self.margin_e0, self.alpha, self.beta,
-                                                                              targets, flag, group)
+                                                                              targets, flag, group, self)
                 else:
                     outputs = forward_and_adapt_deyo(x, iter_, self.model, self.args,
                                                     self.optimizer, self.deyo_margin,
                                                     self.margin_e0, self.alpha, self.beta, 
-                                                    targets, flag, group)
+                                                    targets, flag, group, self)
         else:
             for _ in range(self.steps):
                 if flag:
@@ -77,7 +77,7 @@ class DeYO(nn.Module):
                                                                                                     self.margin_e0,
                                                                                                     self.alpha,
                                                                                                     self.beta,
-                                                                                                    targets, flag, group)
+                                                                                                    targets, flag, group, self)
                 else:
                     outputs = forward_and_adapt_deyo(x, iter_, self.model, 
                                                     self.args, self.optimizer, 
@@ -112,7 +112,7 @@ def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
     return -(x.softmax(1) * x.log_softmax(1)).sum(1)
 
 @torch.enable_grad()  # ensure grads in possible no grad context for testing
-def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin, alpha, beta, targets=None, flag=True, group=None):
+def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin, alpha, beta, targets=None, flag=True, group=None, deyo=None):
     """Forward and adapt model input data.
     Measure entropy of the model prediction, take gradients, and update params.
     """
@@ -122,19 +122,20 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
     
     optimizer.zero_grad()
     entropys = softmax_entropy(outputs)
+    # csid_weights = None
 
     # Optional: weight PLPD and entropy using csID confidence scores BEFORE filtering
     # if hasattr(args, "use_csid_weighting") and args.use_csid_weighting and hasattr(model, "csid_probs"):
-    #     prob_slice = model.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(plpd)]
-    #     csid_weights = torch.tensor(prob_slice, device=plpd.device, dtype=plpd.dtype)
+    prob_slice = deyo.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(entropys)]
+    csid_weights = torch.tensor(prob_slice, device=entropys.device, dtype=entropys.dtype)
 
-    #     # Apply weighting before thresholding
-    #     plpd = plpd * csid_weights
-    #     entropys = entropys * csid_weights
-    
+        # Apply weighting before thresholding
+        # plpd = plpd * csid_weights
+        # entropys = entropys * csid_weights
+
     if args.filter_ent:
         # --- ORIGINAL THRESHOLDING ---
-        filter_ids_1 = torch.where((entropys < deyo_margin))
+        # filter_ids_1 = torch.where((entropys < deyo_margin))
         # --- OTSU THRESHOLDING ---
         # entropy_scores = entropys.detach().cpu().numpy()
         # ent_thresh = threshold_otsu(entropy_scores)
@@ -145,6 +146,8 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
         # kneedle = KneeLocator(range(len(entropy_scores)), entropy_scores, curve='convex', direction='increasing')
         # ent_thresh = entropy_scores[kneedle.knee]
         # filter_ids_1 = torch.where((entropys < ent_thresh))
+        # --- UNIENT THRESHOLDING ---
+        filter_ids_1 = torch.where((csid_weights > 0.5))        
         
     else:    
         filter_ids_1 = torch.where((entropys <= math.log(1000)))
@@ -198,6 +201,7 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
         # kneedle = KneeLocator(range(len(plpd_scores)), plpd_scores, curve='convex', direction='increasing')
         # plpd_thresh = plpd_scores[kneedle.knee]
         # filter_ids_2 = torch.where((plpd > plpd_thresh))
+
     else:
         filter_ids_2 = torch.where(plpd >= -2.0)
     entropys = entropys[filter_ids_2]
@@ -239,21 +243,21 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
         # --- LEARNABLE PARAMETER IMPLEMENTATION ---
         # coeff = F.softmax(alpha * plpd, dim=0) + F.softmax(-beta * (entropys - margin), dim=0)
 
-        coeff = (alpha * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
-                 beta * (1 / (torch.exp(-1. * plpd.clone().detach())))
-                ) 
+        # coeff = (alpha * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
+        #          beta * (1 / (torch.exp(-1. * plpd.clone().detach())))
+        #         ) 
 
-        # --- ENTINT WEIGHTING ---
-        csid_weights = torch.ones(len(plpd))
-        if hasattr(args, "use_csid_weighting") and args.use_csid_weighting and hasattr(model, "csid_probs"):
-            prob_slice = model.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(plpd)]
-            csid_weights = torch.tensor(prob_slice, device=plpd.device, dtype=plpd.dtype)
-        coeffs = csid_weights
+        # --- UNIENT WEIGHTING ---
+        # csid_weights = torch.ones(len(plpd), device = plpd.device)
+        # if hasattr(args, "use_csid_weighting") and args.use_csid_weighting and hasattr(model, "csid_probs"):
+        #     prob_slice = model.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(plpd)]
+        #     csid_weights = torch.tensor(prob_slice, device=plpd.device, dtype=plpd.dtype)
+        # coeff = csid_weights
 
         # --- ORIGINAL IMPLEMENTATION ---
-        # coeff = (args.reweight_ent * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
-        #          args.reweight_plpd * (1 / (torch.exp(-1. * plpd.clone().detach())))
-        #         )            
+        coeff = (args.reweight_ent * (1 / (torch.exp(((entropys.clone().detach()) - margin)))) +
+                 args.reweight_plpd * (1 / (torch.exp(-1. * plpd.clone().detach())))
+                )            
         entropys = entropys.mul(coeff)
     loss = entropys.mean(0)
 
