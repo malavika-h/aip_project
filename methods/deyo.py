@@ -125,20 +125,20 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
     # csid_weights = None
 
     # Optional: weight PLPD and entropy using csID confidence scores BEFORE filtering
-    prob_slice = deyo.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(entropys)]
-    csid_weights = torch.tensor(prob_slice, device=entropys.device, dtype=entropys.dtype)
+    # prob_slice = deyo.csid_probs[iter_ * args.test_batch_size : iter_ * args.test_batch_size + len(entropys)]
+    # csid_weights = torch.tensor(prob_slice, device=entropys.device, dtype=entropys.dtype)
 
     # Apply weighting before thresholding
-    entropys = entropys * csid_weights
+    # entropys = entropys * csid_weights
 
     if args.filter_ent:
         # --- ORIGINAL THRESHOLDING ---
-        # filter_ids_1 = torch.where((entropys < deyo_margin))
+        filter_ids_1 = torch.where((entropys < deyo_margin))
         # --- OTSU THRESHOLDING ---
-        entropy_scores = entropys.detach().cpu().numpy()
-        ent_thresh = threshold_otsu(entropy_scores)
-        filter_ids_1 = torch.where((entropys < ent_thresh))
-        filter_ids_1 = torch.where((entropys < args.global_ent_thresh))
+        # entropy_scores = entropys.detach().cpu().numpy()
+        # ent_thresh = threshold_otsu(entropy_scores)
+        # filter_ids_1 = torch.where((entropys < ent_thresh))
+        # filter_ids_1 = torch.where((entropys < args.global_ent_thresh))
         # --- ELBOW THRESHOLDING ---
         # entropy_scores = np.sort(entropys.detach().cpu().numpy())
         # kneedle = KneeLocator(range(len(entropy_scores)), entropy_scores, curve='convex', direction='increasing')
@@ -192,15 +192,15 @@ def forward_and_adapt_deyo(x, iter_, model, args, optimizer, deyo_margin, margin
     plpd = torch.gather(prob_outputs, dim=1, index=cls1.reshape(-1,1)) - torch.gather(prob_outputs_prime, dim=1, index=cls1.reshape(-1,1))
     plpd = plpd.reshape(-1)
 
-    plpd = plpd * csid_weights
+    # plpd = plpd * csid_weights
     
     if args.filter_plpd:
         # --- ORIGINAL THRESHOLDING ---
-        # filter_ids_2 = torch.where(plpd > args.plpd_threshold)
+        filter_ids_2 = torch.where(plpd > args.plpd_threshold)
         # --- OTSU THRESHOLDING ---
-        plpd_scores = plpd.detach().cpu().numpy()
-        plpd_thresh = threshold_otsu(plpd_scores)
-        filter_ids_2 = torch.where((plpd > plpd_thresh))
+        # plpd_scores = plpd.detach().cpu().numpy()
+        # plpd_thresh = threshold_otsu(plpd_scores)
+        # filter_ids_2 = torch.where((plpd > plpd_thresh))
         # --- ELBOW THRESHOLDING ---
         # plpd_scores = np.sort(plpd.detach().cpu().numpy())
         # kneedle = KneeLocator(range(len(plpd_scores)), plpd_scores, curve='convex', direction='increasing')
